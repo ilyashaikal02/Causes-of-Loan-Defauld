@@ -1,0 +1,905 @@
+---
+title: "Causes of Loan Default"
+author: "Muhamad Ilyas Haikal"
+output: 
+ html_document:
+   toc: true
+   toc_float: true
+   highlight: zenburn
+   df_print: paged
+   theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r out.width="80%", echo=FALSE}
+knitr::include_graphics("additional_assets//defauld.jpeg")
+```
+
+
+# 1 Introduction
+Debt and the issues resulting from debt have been an important and controversial issue in the media recently. From student loans to car payments to mortgages, almost everyone is in some form of debt. In this analysis we will be investigating a couple of questions, what are the causes of loan default and which types of loans are the riskiest (cause more defaults and missed payments).
+
+# 2 Description of the Data
+The data that we will be using is a subset of a larger database that looks at the who defaulted on their loans and who did not. In this dataset there are 1000 observations and there are 16 variables of interest. Below are the variables and their descriptions:
+
+- Variable 1: Checking Amount (Numeric)
+
+- Variable 2: Term (in months) (Numeric)
+
+- Variable 3: Credit Score (Numeric)
+
+- Variable 4: Gender (Categorical)
+
+- Variable 5: Martial Status (Categorical)
+
+- Variable 6: Car Loan (1-Car Loan, 0-No Car Loan)
+
+- Variable 7: Personal Loan (1-Personal Loan, 0-No Personal Loan)
+
+- Variable 8: Home Loan (1-Home Loan, 0- No Home Loan)
+
+- Variable 9: Education Loan (1- Education Loan, 0- No Education Loan)
+
+- Variable 10: Employment Status
+
+- Variable 11: Loan Amount
+
+- Variable 12: Savings Amount
+
+- Variable 13: Employment Duration in Months
+
+- Variable 14: Age in Years
+
+- Variable 15: Number of Credit Amount
+
+- Variable 16: Default Status (1-Yes, 0-No)
+
+
+As you can see there are 16 variables that according to the source 13 are numeric and 3 are categorical. Depending on the loan type and if they have multiple loans, they could also be considered categorical variables. This is something we will investigate in the EDA. The variable of most importance is the Default Status, as this is the dependent variable that we are investigating in this study.
+
+```{r warning = FALSE, message = FALSE}
+library(lubridate)
+library(tidyverse)
+library(magrittr)
+library(forecast)
+library(ggplot2)
+library(yardstick)
+library(MLmetrics)
+library(ggplot2)
+library(GGally)
+library(kableExtra)
+library(neuralnet)
+library(pROC)
+library(rpart)
+library(rpart.plot)
+```
+
+```{r}
+LoanDefault = read.csv("BankLoanDefaultDataset.csv")
+head(LoanDefault)
+```
+When looking into the dataset and doing some early investigating, as you can see below, there are no missing values or observations. This is a great sign as we do not have to impute or estimate potential missing values to sure up our analysis. Since there no missing values, there is really nothing we have to do to the dataset or the missing values to have it ready for the analysis. There are some concerns of incorrect values for the checking amount as some values are in the negative, but after further investigation and reasoning, this is not to be a concern as it is a regular occurrence for certain individuals to have a negative balance in their accounts.
+
+```{r}
+summary(LoanDefault)
+```
+
+# 3 Exploratory Data Analysis (EDA)
+The purpose of EDA is to get a look into the variables and the dataset to see if we notice and trends, dependencies, or obscurities that need to be addressed before we go into our modeling and analysis. In the sections below we will look into the numeric variables, there relationships, patterns and if they needed to be transformed. We will look into the categorical variables as well looking at the dependencies and any patterns observed. Lastly, based off of those results we will determine if any transformations or treatments are needed for the data before analysis.
+
+Before doing any type of analysis, there are a some variables that are listed as numeric as 0 for no and 1 for yes, that need to be changed to categorical variables. Those variables are Default, Car_Loan, Personal_Loan, Home_Loan and Education_Loan. Those changes are reflected in the code below.
+
+```{r}
+#Changing Default to No and Yes instead of 0 and 1
+LoanDefault$Default <-
+  ifelse(LoanDefault$Default == 0, 'No', 'Yes')
+```
+```{r}
+#Changing all loan statuses from 0 and 1 to No and Yes respectively
+LoanDefault$Car_loan <-
+  ifelse(LoanDefault$Car_loan == 0, 'No', 'Yes')
+
+LoanDefault$Personal_loan <-
+  ifelse(LoanDefault$Personal_loan == 0, 'No', 'Yes')
+
+LoanDefault$Home_loan <-
+  ifelse(LoanDefault$Home_loan == 0, 'No', 'Yes')
+
+LoanDefault$Education_loan <-
+  ifelse(LoanDefault$Education_loan == 0, 'No', 'Yes')
+
+
+```
+
+## 3.1 Numerical Data Analysis
+The purpose of numerical data analysis is to use the graphics that we create to investigate any potential associations that could be interesting for our analysis. We do this by looking at the correlations of the variables as well as looking at the density curves of the variables we will study in pairs.
+
+### 3.1.1 Pairwise Associations
+
+```{r}
+#Creating new dataset with default status and all of the numeric variables
+default.pairs <- LoanDefault[ , c(1:4, 12:16)]
+```
+
+```{r}
+ggpairs(default.pairs,                 
+        columns = 2:9,       
+        aes(color = Default,  
+            alpha = 0.5)) 
+```
+
+When looking at the correlations between the numeric variables, there does not seem to be any strong correlation between the variables. All correlations are below 0.3 which is not significant. As for the density curves, there are a couple of concern, first being employment duration, this seems to be very associated and dependent for loan default status. The same can be said for number of credit accounts, as these curves are nearly identical. For the analysis, we will be removing those variables for the analytical dataset.
+
+### 3.1.2 Discretization
+There are a couple of variables of interest that need to be investigated. The first is the term of the loans. Most loans have a very similar length of loans. The plot below shows the distribution of the term variable.
+
+```{r}
+par(mfrow = c(3,2))
+hist(LoanDefault$Checking_amount, main = "Distribution of Checking Account Balance")
+hist(LoanDefault$Term, main = "Distribution of Length of Loan")
+hist(LoanDefault$Credit_score, main = "Distribution of Credit Scores")
+hist(LoanDefault$Amount, main = "Distribution of Loan Amounts")
+hist(LoanDefault$Saving_amount, main = "Distribution of Savings Account Balance")
+hist(LoanDefault$Age, main = "Distribution of Age of Participants")
+```
+
+From viewing the distributions of the continuous variables, all variables besides credit score are normally distributed. To look into this variable further, we will be categorizing each credit score into a certain level. These levels are based off of the FICO score ranges. According to US News & World Report (https://money.usnews.com/credit-cards/articles/what-are-the-credit-score-ranges), credit scores can be categorized by Poor: 579 and lower, Fair: 580-669, Good: 670-739, Very Good: 740-799 and Exceptional: 800 and above. We will use these classifications for our categorical analysis of Credit Score.
+
+## 3.2 Categorical Data Analysis
+The purpose of categorical data analysis is to see any relationships that can be seen between variables of certain categories. We can do this by making mosaic plots and comparing the amount of defaults from each category. For this study I looked at what I call Life Status (Employment, Marital and Gender) as well as the types of Loans (Car, Personal, Home and Education)
+
+### 3.2.1 Life Status vs Default
+```{r}
+par(mfrow = c(1,3))
+mosaicplot(Emp_status ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Employment Status on Loan Default")
+mosaicplot(Marital_status ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Loan Defaults by Marital Status")
+mosaicplot(Gender ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Loan Default by Gender")
+```
+
+
+From looking at the plots above, there is no association between employment status and defaulting on loans. For each employment status, the amount of those who defaulted is equal for each group. When looking at married vs single, those who were single have a higher amount of default. When comparing gender, Females have a higher rate of default when compared to males. From investigating these variables, employment status will also be dropped from the analytical dataset.
+
+### 3.2.2 Loan Type vs Default
+```{r}
+par(mfrow = c(2,2))
+mosaicplot(Car_loan ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Car Loan vs. Default")
+mosaicplot(Personal_loan ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Personal Loan vs. Default")
+mosaicplot(Home_loan ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Home Loan vs. Default")
+mosaicplot(Education_loan ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Education Loan vs. Default")
+```
+
+
+The mosaic plots above look into which types of loans are and their associations with default. When looking at overall size, there are significantly more people that have car loans or personal loans compared to those with home or education loans. These plots show that having a car loan or education loan are positively correlated with loan default. The opposite is true for those with home loans and personal loans, those loans are paid back.
+
+**Credit Score Discretization**
+
+```{r}
+#Changing the values of Credit_Score to the FICO score categories
+
+LoanDefault$grp.credit_score = ifelse(LoanDefault$Credit_score > 799, "Exceptional", ifelse(LoanDefault$Credit_score >739, "Very Good", ifelse(LoanDefault$Credit_score >669, "Good", ifelse(LoanDefault$Credit_score >579, "Fair", "Poor"))))
+```
+
+```{r}
+mosaicplot(grp.credit_score ~ Default, data=LoanDefault,col=c("Blue","Red"), main="Credit Score Groups vs. Default")
+```
+
+
+From looking at the mosaic plot of the groups, credit score group is associated with loan default. As those that have better credit groups, have a lower rate of default.
+
+# 4 EDA Conclusions
+Based off of the results of the EDA, I believe that after switching certain numeric variables to character, we were able to get a good idea of what the data looks like and how it will perform under testing. When looking at the data numerically, there does not seem to be any significant associations between the numeric variables themselves. There is an association between loan default status and employment duration as well as number of credit accounts. When looking at the categorical variables, there is no association between employment status and loan defaults, there more loan defaults for those that are single compared to those that are married. When comparing gender, females had a higher amount of default compared to Males. As for the different type of loans, those with car loans and educational loans have a higher rate of default compared to not having those and the opposite was true for those with personal and home loans. For our analytical dataset we will be using the 12 following variables to predict loan default:
+
+- Checking Amount (Numeric)
+
+- Term (in months) (Numeric)
+
+- Credit Score (Numeric)
+
+- Gender (Categorical)
+
+- Martial Status (Categorical)
+
+- Car Loan (1-Car Loan, 0-No Car Loan)
+
+- Personal Loan (1-Personal Loan, 0-No Personal Loan)
+
+- Home Loan (1-Home Loan, 0- No Home Loan)
+
+- Education Loan (1- Education Loan, 0- No Education Loan)
+
+- Loan Amount
+
+- Savings Amount
+
+- Age in Years
+
+# 5 Model Building
+
+## 5.1 Practical Questions
+In this study we are looking into the causes of loan default and the different types of loans that could cause loan default. The question of interest in this analysis is what are the causes of loan default? The other question that we will also look into is, are different types of loans associated with higher percentage of loan default.
+
+## 5.2 Response Variable
+The response variable or variable of interest in Loan Default. Loan default is when someone stops making required payments on a loan. The variable is a binary variable with 1 for defaulting on a loan and 0 for not defaulting/still making payments.
+
+## 5.3 Approach
+To answer the questions of interest, we will be constructing a logistic predictive model for our dataset. To do this we will start with one large model that contains all the variables as well as another minimal model with one variable. After that we will use a stepwise approach to find the best model of interest. Lastly, we will predict some arbitrary made up values to see if our final model works.
+
+# 6 Building the Logistic Model
+
+## 6.1 Initial Model
+```{r}
+#Changing values of all character variables to binary numeric variables
+
+LoanDefault$Default <-
+  ifelse(LoanDefault$Default == 'No', 0, 1)
+
+LoanDefault$Gender <-
+  ifelse(LoanDefault$Gender == "Female", 0, 1)
+
+LoanDefault$Marital_status <-
+  ifelse(LoanDefault$Marital_status == "Single", 0, 1)
+
+LoanDefault$Car_loan <-
+  ifelse(LoanDefault$Car_loan == "No", 0, 1)
+
+LoanDefault$Personal_loan <-
+  ifelse(LoanDefault$Personal_loan == "No", 0, 1)
+
+LoanDefault$Home_loan <-
+  ifelse(LoanDefault$Home_loan == "No", 0, 1)
+
+LoanDefault$Education_loan <-
+  ifelse(LoanDefault$Education_loan == "No", 0, 1)
+```
+
+```{r}
+#Building the initial model with all of the variables in the dataset
+
+initial.model = glm(Default ~ Checking_amount + Term + Credit_score + Gender + Marital_status + Car_loan + Personal_loan + Home_loan + Education_loan + Amount + Saving_amount  + Age, family = binomial, data = LoanDefault)
+
+#Looking at the table of the initial logistic model
+
+coefficient.table = summary(initial.model)$coef
+
+kable(coefficient.table, caption = 'Initial Model Created Using All Variables of Dataset')
+```
+From looking at the results above, most of the variables are deemed to be not significant, a couple of note that are significant are checking amount, term, credit score, amount, saving amount and age.
+
+## 6.2 Simplest Model
+This model will only have 2 variables, the amount of the loan and credit score. We chose these because credit score determines interest rates and having more to pay off will most likely result in a default.
+
+```{r}
+simple.model = glm(Default ~ Amount + Credit_score, family = binomial, data = LoanDefault)
+
+coefficient.table2 = summary(simple.model)$coef
+
+kable(coefficient.table2, caption = 'The Simplest Model Created Using the Decided Significant Variables')
+```
+As we thought, amount and credit score on their own are deemed to be extremely significant when making the model on loan default. These two variables will be the starting point of our model building.
+
+## 6.3 Final Model
+```{r}
+final.model = step(initial.model,
+scope=list(lower=formula(simple.model),upper=formula(initial.model)),
+data = LoanDefault,
+direction = "backward",
+trace = 0)
+
+final.model.table = summary(final.model)$coef
+
+kable(final.model.table, caption = 'Final Analytical Model for Loan Default with the Selected Variables')
+```
+Above is the final model, which uses 9 of the original 16 variables. The only variable with a non-significant at 0.05 p-value is amount, which when thinking of loan defaults and loans is extremely important because that is what is needed to be paid off. Next we will use some made up situations to predict whether someone will default on their loans or not.
+
+# 7 Predictive Probabilites
+```{r}
+#Coming up with random values to test the model looking at probabilities of loan default
+
+test.values = data.frame(Checking_amount=c(634, 300),
+                       Term = c(18, 25),
+                       Credit_score = c(600, 737),
+                       Personal_loan = c(1, 0),
+                       Home_loan = c(0, 0),
+                       Education_loan = c(0, 1),
+                       Amount = c(1534, 1804),
+                       Saving_amount = c(3350, 2449),
+                       Age = c(33, 29))
+
+pred.success.prob = predict(final.model, newdata = test.values, type="response")
+
+#Calculating the probability of default for the random values and using a cut off of greater than or equal to 0.5.
+
+cut.off.prob = 0.5
+pred.response = ifelse(pred.success.prob >= cut.off.prob, 1, 0)
+
+test.values$Pred.Response = pred.response
+
+kable(test.values, caption = 'Predicted Default Result Using the Final Model')
+```
+Above is the random test values used to test the model. Using the 10 variables of interest our model predicted that the first individual will not default on their loan, while the second individual will default on their loan.
+
+# 8 Cross Validation
+The purpose of cross validation is to use our data to test the models that we have come up with to figure out which model is the best. In order to do this we will be splitting the data into a training set (70% of data) and a testing set (30% of data). The training set will allow us to pick a model and then the test set will be used as validation for our model. We will also use the testing dataset to come up with our optimal cut-off probability.
+
+```{r}
+nodefault.id = which(LoanDefault$Default == 0)
+default.id = which(LoanDefault$Default == 1)
+LoanDefault$default.status = 0
+LoanDefault$default.status[default.id] = 1
+nn = dim(LoanDefault)[1]
+train.id = sample(1:nn, round(nn*0.7), replace = FALSE)
+training = LoanDefault[train.id,]
+testing = LoanDefault[-train.id,]
+
+#Splitting the datasets into training and testing datasets
+```
+
+## 8.1 Finding the Best Model and Cut-Off Probability
+To find the optimal cut-off we will be using 20 different possible cut-off probabilities and then use a 5 fold cross validation to find the best cut-off probability. We will be doing this to two different models and picking the best based on the best accuracy. To do this, the models used will be the full model we created will all the analytical variables and the final model we came up with previously with the 9 variables used.
+
+### 8.1.1 Testing the Full Model
+
+```{r}
+n0 = dim(training)[1]/5
+cut.off.prob = seq(0, 1, length = 22)[-c(1,22)]
+pred.accuracy = matrix(0, ncol=20, nrow=5, byrow = T)
+```
+
+```{r}
+for (i in 1:5){
+  valid.id = ((i-1)*n0 + 1):(i*n0)
+  valid.data = training[valid.id,]
+  train.data = training[-valid.id,]
+  full_model = glm(Default ~ Checking_amount + Term + Credit_score + Gender + Marital_status + Car_loan + Personal_loan + Home_loan + Education_loan + Amount + Saving_amount  + Age, family = binomial(link = logit), data = train.data)
+  newdata = data.frame(valid.data)
+  pred.prob = predict.glm(full_model, newdata, type = "response")
+  
+  for(j in 1:20){
+    pred.status = rep(0,length(pred.prob))
+    valid.data$pred.status = as.numeric(pred.prob >cut.off.prob[j])
+    a11 = sum(valid.data$pred.status == valid.data$default.status)
+    pred.accuracy[i,j] = a11/length(pred.prob)
+  }
+}
+
+avg.full.accuracy = apply(pred.accuracy, 2, mean)
+max.full.id = which(avg.full.accuracy == max(avg.full.accuracy ))
+
+tick.label = as.character(round(cut.off.prob,2))
+plot(1:20, avg.full.accuracy, type = "b",
+     xlim=c(1,20), 
+     ylim=c(0.5,1), 
+     axes = FALSE,
+     xlab = "Cut-off Probability",
+     ylab = "Accuracy",
+     main = "5-fold CV performance"
+     )
+axis(1, at=1:20, label = tick.label, las = 2)
+axis(2)
+segments(max.full.id, 0.5, max.full.id, avg.full.accuracy[max.full.id], col = "blue")
+text(max.full.id, avg.full.accuracy[max.full.id]+0.03, as.character(round(avg.full.accuracy[max.full.id],4)), col = "blue", cex = 0.8)
+```
+
+### 8.1.2 Testing the Final Model
+```{r}
+n0 = dim(training)[1]/5
+cut.off.prob = seq(0, 1, length = 22)[-c(1,22)]
+pred.accuracy = matrix(0, ncol=20, nrow=5, byrow = T)
+
+for (i in 1:5){
+  valid.id = ((i-1)*n0 + 1):(i*n0)
+  valid.data = training[valid.id,]
+  train.data = training[-valid.id,]
+  train.final_model = glm(Default ~ Checking_amount + Term + Credit_score +   Personal_loan + Home_loan + Education_loan + Amount + Saving_amount  + Age, family = binomial(link = logit), data = train.data)
+  newdata = data.frame(valid.data)
+  pred.prob = predict.glm(train.final_model, newdata, type = "response")
+  
+  for(j in 1:20){
+    pred.status = rep(0,length(pred.prob))
+    valid.data$pred.status = as.numeric(pred.prob >cut.off.prob[j])
+    a11 = sum(valid.data$pred.status == valid.data$default.status)
+    pred.accuracy[i,j] = a11/length(pred.prob)
+  }
+}
+
+avg.final.accuracy = apply(pred.accuracy, 2, mean)
+max.final.id = which(avg.final.accuracy ==max(avg.final.accuracy ))
+
+tick.label = as.character(round(cut.off.prob,2))
+plot(1:20, avg.final.accuracy, type = "b",
+     xlim=c(1,20), 
+     ylim=c(0.5,1), 
+     axes = FALSE,
+     xlab = "Cut-off Probability",
+     ylab = "Accuracy",
+     main = "5-fold CV performance"
+     )
+axis(1, at=1:20, label = tick.label, las = 2)
+axis(2)
+segments(max.final.id, 0.5, max.final.id, avg.final.accuracy[max.final.id], col = "blue")
+text(max.final.id, avg.final.accuracy[max.final.id]+0.03, as.character(round(avg.final.accuracy[max.final.id],4)), col = "blue", cex = 0.8)
+```
+
+
+### 8.1.3 Testing the Final Model
+To test the final model, we will use the remaining 30% of the analytical dataset to test our model’s predictions at the optimal cutoff point, which we determined to be a probability of 0.62
+
+```{r}
+#Testing the Final Model
+
+test.final.model = glm(Default ~ Checking_amount + Term + Credit_score + Gender + Marital_status + Car_loan + Personal_loan + Home_loan + Education_loan + Amount + Saving_amount  + Age, family = binomial(link = logit), data = training)
+newdata = data.frame(testing)
+pred.prob.test = predict.glm(test.final.model, newdata, type = "response")
+testing$test.status = as.numeric(pred.prob.test > 0.62)
+a11 = sum(testing$test.status == testing$Default)
+test.accuracy = a11/length(pred.prob.test)
+kable(as.data.frame(test.accuracy), align='c')
+```
+The results showed an accuracy of 88.667% which is slightly than our original accuracy with the training dataset. This shows that this model is a great fit for the data and does an excellent job predicting probabilities correctly.
+
+
+# 9 Testing Performance Measures
+To test how well our model works, there are performance measures that can be used to determine just that. There are local and global measures that we can use. The local measures we use are precision, which is the percentage of true positives among all positives, recall which are positives that are correctly predicted as positives and F1 score which is a metric that combines precision and recall. These are all evaluated at the cutoff probability. The global measures are sensitivity, which is the same as reacll, specificity which is the true negative rate among the dataset. We also use a ROC curve which shows performance at all cutoff probability thresholds. The AUC shows us how accurate our model is at all thresholds.
+
+## 9.1 Local Performance Measures
+```{r}
+test.final.model = glm(Default ~ Checking_amount + Term + Credit_score + Gender + Marital_status + Car_loan + Personal_loan + Home_loan + Education_loan + Amount + Saving_amount  + Age, family = binomial(link = logit), data = training)
+newdata = data.frame(testing)
+pred.prob.test = predict.glm(test.final.model, newdata, type = "response")
+testing$test.status = as.numeric(pred.prob.test > 0.62)
+
+p0.a0 = sum(testing$test.status ==0 & testing$default ==0)
+p0.a1 = sum(testing$test.status ==0 & testing$default ==1)
+p1.a0 = sum(testing$test.status ==1 & testing$default ==0)
+p1.a1 = sum(testing$test.status ==1 & testing$Default ==1)
+
+sensitivity = p1.a1 / (p1.a1 + p0.a1)
+specificity = p0.a0 / (p0.a0 + p1.a0)
+
+precision = p1.a1 / (p1.a1 + p1.a0)
+recall = sensitivity
+F1 = 2*precision*recall/(precision + recall)
+metric.list = cbind(sensitivity = sensitivity, 
+                    specificity = specificity, 
+                    precision = precision,
+                    recall = recall,
+                    F1 = F1)
+kable(as.data.frame(metric.list), align='c', caption = "Local Performance Metrics")
+```
+The table above gives us at the optimal cutoff there is a sensitivity of 0.852 which is those of who are actually defaulting when they are predicted to default. The specificity is 0.96 which is those who did not default when they were predicted to default.
+
+## 9.2 ROC Curve
+```{r}
+cut.off.seq = seq(0, 1, length = 20)
+sensitivity.vec = NULL
+specificity.vec = NULL
+for (i in 1:20){
+  testing$test.status = as.numeric(pred.prob.test > cut.off.seq[i])
+
+p0.a0 = sum(testing$test.status ==0 & testing$Default ==0)
+p0.a1 = sum(testing$test.status ==0 & testing$Default ==1)
+p1.a0 = sum(testing$test.status ==1 & testing$Default==0)
+p1.a1 = sum(testing$test.status ==1 & testing$Default ==1)
+
+sensitivity.vec[i] = p1.a1 / (p1.a1 + p0.a1)
+specificity.vec[i] = p0.a0 / (p0.a0 + p1.a0)
+}
+one.minus.spec = c(1,1 - specificity.vec)
+sens.vec = c(1,sensitivity.vec)
+
+par(pty = "s")
+plot(one.minus.spec, sens.vec, type = "l", xlim = c(0,1),
+     xlab ="1 - specificity",
+     ylab = "sensitivity",
+     main = "ROC curve of Final Logistic Model for Loan Default",
+     lwd = 2,
+     col = "red", )
+segments(0,0,1,1, col = "black", lty = 2, lwd = 2)
+AUC = round(sum(sens.vec*(one.minus.spec[-101]-one.minus.spec[-1])),4)
+text(0.78, 0.5, paste("AUC = ", AUC), col = "blue")
+```
+
+
+
+The ROC curve above shows us the false positive rate (1-specificity) vs the the true positive rate or sensitivity. This graph goes from 20 different cutoff points from 0 to 1. As specificity decreases or on the graph the x-axis increases, so the less we predict negatives incorrectly, we also predict positives correctly. The AUC is 0.983, which means 98% of values are accounted for by the ROC curve.
+
+# 10 Neural Network Model
+Another way that models can be build is using a data driven approach via neural network. This approach uses machine learning to find to patterns of the variables to predict the response variable. In order to this we will standardize all of the numeric variables and reset the categorical variables to have one value set as a dummy variable. We will using the analytical dataset that we created as a result of our EDA analysis.
+
+```{r}
+#Creating the analytical dataset "Loans" that was established after EDA analysis and then saving the dataset to my computer.
+Loans <- LoanDefault[-c(11,14,16)]
+write.csv(Loans, file = "Loans.csv")
+
+```
+## 10.1 Scaling Numeric Variables and Defining the Model
+```{r}
+Loans$Checking_amount = (Loans$Checking_amount-min(Loans$Checking_amount))/(max(Loans$Checking_amount)-min(Loans$Checking_amount))
+Loans$Term = (Loans$Term-min(Loans$Term))/(max(Loans$Term)-min(Loans$Term))
+Loans$Credit_score = (Loans$Credit_score-min(Loans$Credit_score))/(max(Loans$Credit_score)-min(Loans$Credit_score))
+Loans$Amount = (Loans$Amount-min(Loans$Amount))/(max(Loans$Amount)-min(Loans$Amount))
+Loans$Saving_amount = (Loans$Saving_amount-min(Loans$Saving_amount))/(max(Loans$Saving_amount)-min(Loans$Saving_amount))
+Loans$Age = (Loans$Age-min(Loans$Age))/(max(Loans$Age)-min(Loans$Age))
+#Scaling all of the continuous variables
+```
+
+```{r}
+Loans$Gender <- ifelse(Loans$Gender == "Female", 0, 1)
+Loans$Marital_status <- ifelse(Loans$Marital_status == "Single", 0, 1)
+
+```
+
+```{r}
+LoansMtx = model.matrix(~ ., data = Loans)
+colnames(LoansMtx)
+```
+
+```{r}
+colnames(LoansMtx)[3] <- "CheckingAmount"
+colnames(LoansMtx)[5] <- "CreditScore"
+colnames(LoansMtx)[7] <- "MaritalStatus"
+colnames(LoansMtx)[8] <- "CarLoan"
+colnames(LoansMtx)[9] <- "PersonalLoan"
+colnames(LoansMtx)[10] <- "HomeLoan"
+colnames(LoansMtx)[11] <- "EducationLoan"
+colnames(LoansMtx)[13] <- "SavingAmount"
+#Creating the Model Matrix and Defining Variable Names
+
+```
+
+Below is the defined model that we will be putting into the Neural Network
+```{r}
+#Defining the Model Formula for the Neural Network
+columnNames = colnames(LoansMtx)
+columnList = paste(columnNames[3:14], collapse = "+")
+columnList = paste(c(columnNames[2],"~",columnList), collapse="")
+ModelFormula = formula(columnList)
+ModelFormula
+
+```
+
+
+## 10.2 Training and Testing the Neural Network Model
+To train and test the Neural Network, the data will be split into a training datset (70% of data) and a testing dataset (30% of data). The Neural Network will be built on the training dataset while the accuracy and performance will be tested with the testing dataset.
+
+```{r}
+#Splitting the dataset
+n = dim(LoansMtx)[1]
+testID = sample(1:n, round(n*0.7), replace = FALSE)
+testDatNN = LoansMtx[testID,]
+trainDatNN = LoansMtx[-testID,]
+```
+
+```{r}
+#Creating the Neural Network and a table of the resulting values of the network.
+NetworkModel = neuralnet(ModelFormula,
+                         data = trainDatNN,
+                         hidden = 1,
+                         rep = 1,                 
+                         threshold = 0.01,        
+                         learningrate = 0.1,      
+                         algorithm = "rprop+")
+
+kable(NetworkModel$result.matrix)
+```
+```{r}
+#Plotting the Neural Network
+plot(NetworkModel, rep = "best")
+```
+
+
+## 10.3 Cross-Validation and ROC Curve
+In order to test the accuracy and performance of the Neural Network model, it must be tested and cross validated with the remaining data. This will be done by finding an optimal cut-off probability for predicting loan default and then using that probability to find the accuracy of the model as well as coming up with the ROC curve.
+
+```{r}
+n0 = dim(trainDatNN)[1]/5
+cut.off.score = seq(0,1, length = 22)[-c(1,22)]        # candidate cut off prob
+pred.accuracy = matrix(0,ncol=20, nrow=5, byrow = T)
+for (i in 1:5){
+  valid.id = ((i-1)*n0 + 1):(i*n0)
+  valid.data = trainDatNN[valid.id,]
+  train.data = trainDatNN[-valid.id,]
+  
+  train.model = neuralnet(ModelFormula,
+                         data = trainDatNN,
+                         hidden = 1,               
+                         rep = 1,                  
+                         threshold = 0.01,         
+                         learningrate = 0.1,       
+                         algorithm = "rprop+"
+                         )
+    pred.nn.score = predict(NetworkModel, valid.data)
+    for(j in 1:20){
+    pred.status = as.numeric(pred.nn.score > cut.off.score[j])
+    a11 = sum(pred.status == valid.data[,2])
+    pred.accuracy[i,j] = a11/length(pred.nn.score)
+  }
+}
+avg.accuracy = apply(pred.accuracy, 2, mean)
+max.id = which(avg.accuracy ==max(avg.accuracy ))
+### visual representation
+tick.label = as.character(round(cut.off.score,2))
+plot(1:20, avg.accuracy, type = "b",
+     xlim=c(1,20), 
+     ylim=c(0.5,1), 
+     axes = FALSE,
+     xlab = "Cut-off Score",
+     ylab = "Accuracy",
+     main = "5-fold CV performance"
+     )
+axis(1, at=1:20, label = tick.label, las = 2)
+axis(2)
+segments(max.id, 0.5, max.id, avg.accuracy[max.id], col = "darkblue")
+text(max.id, avg.accuracy[max.id]+0.03, as.character(round(avg.accuracy[max.id],4)), col = "palegreen4", cex = 0.8)
+```
+
+
+The resulting plot shows the optimal cut-off probability to be 0.57 for predicting loan default. This value will be used to test the accuracy versus the logistic model later on. Below is the ROC curve to test how well the data fits the Neural Network model.
+
+```{r}
+nn.results = predict(NetworkModel, trainDatNN)  
+cut0 = seq(0,1, length = 20)
+SenSpe = matrix(0, ncol = length(cut0), nrow = 2, byrow = FALSE)
+for (i in 1:length(cut0)){
+    a = sum(trainDatNN[,"Default"] == 1 & (nn.results > cut0[i]))
+    d = sum(trainDatNN[,"Default"] == 0 & (nn.results < cut0[i]))
+    b = sum(trainDatNN[,"Default"] == 0 & (nn.results > cut0[i]))    
+    c = sum(trainDatNN[,"Default"] == 1 & (nn.results < cut0[i]))   
+    sen = a/(a + c)
+    spe = d/(b + d)
+    SenSpe[,i] = c(sen, spe)
+}
+# plotting ROC
+plot(1-SenSpe[2,], SenSpe[1,], type ="l", xlim=c(0,1), ylim=c(0,1),
+     xlab = "1 - specificity", ylab = "Sensitivity", lty = 1,
+     main = "ROC Curve", col = "blue")
+abline(0,1, lty = 2, col = "red")
+## Calculate AUC
+xx = 1-SenSpe[2,]
+yy = SenSpe[1,]
+width = xx[-length(xx)] - xx[-1]
+height = yy[-1]
+
+
+  prediction = nn.results
+  category = trainDatNN[,"Default"] == 1
+  ROCobj <- roc(category, prediction)
+  
+   AUC = auc(ROCobj)[1]
+
+
+AUC =mean(sum(width*height), sum(width*yy[-length(yy)]))
+text(0.8, 0.3, paste("AUC = ", round(AUC,4)), col = "darkorange2", cex = 0.9)
+legend("bottomright", c("ROC Curve", "50/50 Line"), lty=c(1,2),
+       col = c("steelblue", "tomato4"), bty = "n", cex = 0.8)
+  
+  
+```
+
+
+The ROC curve results in a value that is much higher than 0.5, which means this model is a great fit and a much better use of predicting loan default than random guessing.
+
+## 10.4 Accuracy Measures and Model Performance
+To test the accuracy of the Neural Network model, the cutoff probability of 0.57 will be used in order for the model to make predictions. The predictions will be compared to the actual Loan Default values and the accuracy will be calculated from there.
+
+```{r}
+#Testing the accuracy of the Neural Network Model and then displaying the results in a table
+nn.results <- predict(NetworkModel, testDatNN)
+results <- data.frame(actual = testDatNN[,2], prediction = nn.results > .57)
+confMatrix = table(results$prediction, results$actual)             
+accuracy=sum(results$actual == results$prediction)/length(results$prediction)
+list(confusion.matrix = confMatrix, accuracy = accuracy)
+```
+
+### 10.4.1 Comparision to Logistic Model
+The table above shows us the accuracy and how many correct false default and true defaults. Overall, this model has an accuracy of about 90% which is very similar to the logistic model. Both models would be excellent choices for our final model. The AUC for both models is in the 90% percent range as well. The logistic model is simpler as it uses less variables than the Neural Network, but otherwise all of the performance measures test out extremely well for both models and you could not go wrong with either model.
+
+
+# 11 Decision Tree Logistic Model
+Decision Tree algorithms are considered supervised algorithms that can be used in modeling. This approach looks at mostly categorical variables to predict outcomes. In order to do this there are two metrics, gini and entropy that tell us which variables can be split to give us more information for making a decision. In this dataset there are a lot of categorical variables, specifically for which types of loans that the observations have taken out. Using that information combined with other variables can lead us to better predicting default. The approach here will be to create eight different decision trees. We will be penalizing false negatives and false positives at different rates, while making two trees for each type of rate, one using the Gini index to make variable splits and another using entropy.
+
+```{r}
+LoanDefault = read.csv("BankLoanDefaultDataset.csv")
+Loans <- LoanDefault[-c(11,14,16)]
+write.csv(Loans, file = "Loans.csv")
+Loans$Default = ifelse(Loans$Default == 1, "Yes", "No")
+#Loading in the analytical dataset
+```
+
+## 11.1 Building Decision Trees
+The decision trees that will be built, will be based off of different penalization for incorrect predictions. In this scenario, it is very costly for a company that incorrectly predicts whether someone defaults on their loans. To do this we will make trees that do not penalize for being incorrect, penalize for just false positive, penalize for just false negative and penalize for both. We will also be making a tree for each with the Gini Index and one for entropy.
+
+```{r}
+n = dim(Loans)[1]
+train.id = sample(1:n, round(0.7*n), replace = FALSE)  
+trainDT = Loans[train.id, ]
+testDT = Loans[-train.id, ]
+#Dividing into training and testing datasets
+```
+
+```{r}
+tree.builder = function(in.data, fp, fn, purity){
+   tree = rpart(Default ~ .,                
+                data = in.data, 
+                na.action  = na.rpart,       
+                method = "class",   
+                model  = FALSE,
+                x = FALSE,
+                y = TRUE,
+            parms = list(
+loss = matrix(c(0, fp, fn, 0), ncol = 2, byrow = TRUE),   
+split = purity),
+control = rpart.control(
+minsplit = 10,
+minbucket= 10,
+cp  = 0.01,  
+xval = 10     
+                        )
+             )
+  }
+#Creating a wrapper to efficiently make the decision trees
+```
+
+```{r}
+gini.tree.1.1 = tree.builder(in.data = trainDT, fp = 1, fn = 1, purity = "gini") #No penalty Gini
+info.tree.1.1 = tree.builder(in.data = trainDT, fp = 1, fn = 1, purity = "information") #No penalty Entropy
+gini.tree.1.10 = tree.builder(in.data = trainDT, fp = 1, fn = 10, purity = "gini") #Penalized False Negative Gini
+info.tree.1.10 = tree.builder(in.data = trainDT, fp = 1, fn = 10, purity = "information") #Penalized False Negative Entropy
+gini.tree.10.1 = tree.builder(in.data = trainDT, fp = 10, fn = 1, purity = "gini") #Penalized False Positive Gini
+info.tree.10.1 = tree.builder(in.data = trainDT, fp = 10, fn = 1, purity = "information") #Penalized False Positive Entropy
+gini.tree.10.10 = tree.builder(in.data = trainDT, fp = 10, fn = 10, purity = "gini") #Both Penalized Gini
+info.tree.10.10 = tree.builder(in.data = trainDT, fp = 10, fn = 10, purity = "information") #Both penalized Entropy
+#Using the wrapper to create the 8 decision trees
+```
+
+
+```{r}
+rpart.plot(gini.tree.1.1, main = "Loan Default Tree with Gini index for No Penalization")
+
+```
+
+```{r}
+rpart.plot(gini.tree.1.10, main = "Loan Default Tree with Gini index for False Negative Penalization")
+```
+
+```{r}
+rpart.plot(gini.tree.10.1, main = "Loan Default Tree with Gini index for False Positive Penalization")
+```
+```{r}
+rpart.plot(gini.tree.10.10, main = "Loan Default Tree with Gini index for Total Penalization")
+```
+Above are the eight decision trees for Defaulting on Loans. As you can see for each penalization and decision index type, each tree is different and tells us different information and predictions.
+
+## 11.2 Decision Tree Performance Measures
+In the sections below we will use ROC curves and cut-off probabilities to determine the best tree. ### ROC Curves ROC Curves show us how accurate our models are and if using the trees will be a better guess than randomly selected Default or No Default.
+
+```{r}
+SenSpe = function(in.data, fp, fn, purity){
+  cutoff = seq(0,1, length = 20) 
+  model = tree.builder(in.data, fp, fn, purity) 
+  pred = predict(model, newdata = in.data, type = "prob")
+  senspe.mtx = matrix(0, ncol = length(cutoff), nrow= 2, byrow = FALSE)
+  for (i in 1:length(cutoff)){
+  pred.out =  ifelse(pred[,"Yes"] >= cutoff[i], "Yes", "No")  
+  TP = sum(pred.out =="Yes" & in.data$Default == "No")
+  TN = sum(pred.out =="No" & in.data$Default == "No")
+  FP = sum(pred.out =="Yes" & in.data$Default == "No")
+  FN = sum(pred.out =="No" & in.data$Default == "Yes")
+  senspe.mtx[1,i] = TP/(TP + FN)
+  senspe.mtx[2,i] = TN/(TN + FP)
+  }
+  prediction = pred[, "Yes"]
+  category = in.data$Default == "Yes"
+  ROCobj <- roc(category, prediction)
+  AUC = auc(ROCobj)
+  list(senspe.mtx= senspe.mtx, AUC = round(AUC,3))
+}
+#Creating a function to quickly and efficiently make ROC Curves
+```
+
+```{r}
+giniROC11 = SenSpe(in.data = trainDT, fp=1, fn=1, purity="gini")
+infoROC11 = SenSpe(in.data = trainDT, fp=1, fn=1, purity="information")
+giniROC110 = SenSpe(in.data = trainDT, fp=1, fn=10, purity="gini")
+infoROC110 = SenSpe(in.data = trainDT, fp=1, fn=10, purity="information")
+giniROC101 = SenSpe(in.data = trainDT, fp=10, fn=1, purity="gini")
+infoROC101 = SenSpe(in.data = trainDT, fp=10, fn=1, purity="information")
+giniROC1010 = SenSpe(in.data = trainDT, fp=10, fn=10, purity="gini")
+infoROC1010 = SenSpe(in.data = trainDT, fp=10, fn=10, purity="information")
+#Creating the ROC curves for each decision tree
+```
+```{r}
+par(pty="s")
+plot(1-giniROC11$senspe.mtx[2,], giniROC11$senspe.mtx[1,], type = "l", xlim=c(0,1), ylim=c(0,1), 
+     xlab="1 - specificity: FPR", ylab="Sensitivity: TPR", col = "blue", lwd = 2,
+     main="ROC Curves of Decision Trees", cex.main = 0.9, col.main = "navy")
+abline(0,1, lty = 2, col = "orchid4", lwd = 2)
+lines(1-infoROC11$senspe.mtx[2,], infoROC11$senspe.mtx[1,], col = "firebrick2", lwd = 2, lty=2)
+lines(1-giniROC110$senspe.mtx[2,], giniROC110$senspe.mtx[1,], col = "olivedrab", lwd = 2)
+lines(1-infoROC110$senspe.mtx[2,], infoROC110$senspe.mtx[1,], col = "skyblue", lwd = 2)
+lines(1-giniROC101$senspe.mtx[2,], giniROC101$senspe.mtx[1,], col = "red", lwd = 2, lty = 4)
+lines(1-infoROC101$senspe.mtx[2,], infoROC101$senspe.mtx[1,], col = "sienna3", lwd = 2)
+lines(1-giniROC1010$senspe.mtx[2,], giniROC101$senspe.mtx[1,], col = "green1", lwd = 2, lty = 4)
+lines(1-infoROC1010$senspe.mtx[2,], infoROC1010$senspe.mtx[1,], col = "gold1", lwd = 2)
+legend("bottomright", c(paste("gini.1.1,  AUC =", giniROC11$AUC), 
+                        paste("info.1.1,   AUC =",infoROC11$AUC), 
+                        paste("gini.1.10, AUC =",giniROC110$AUC), 
+                        paste("info.1.10, AUC =",infoROC110$AUC),
+                        paste("gini.10.1, AUC =",giniROC101$AUC), 
+                        paste("info.10.1, AUC =",infoROC101$AUC),
+
+paste("gini.10.10, AUC =",giniROC1010$AUC), 
+                        paste("info.10.10, AUC =",infoROC1010$AUC)),              
+                        col=c("blue","firebrick2","olivedrab","skyblue","red","sienna3","green1","gold1"), 
+                        lty=rep(1,6), lwd=rep(2,6), cex = 0.5, bty = "n")
+```
+
+
+Above is the corresponding ROC curves for the 8 decision trees. The best model is the info10.10 because it has the largest AUC, which means it is the most accurate and it also penalizes for incorrect answers which separates it from the not penalized model.
+
+### 11.2.1 Cut-Off Probability
+The purpose of the cut-off probability is to determine the optimal probability given by the model to determine whether it will predict if someone will default or not default. Below are those cut-off probabilities.
+
+```{r}
+Optm.cutoff = function(in.data, fp, fn, purity){
+  n0 = dim(in.data)[1]/5
+  cutoff = seq(0,1, length = 20)    
+  accuracy.mtx = matrix(0, ncol=20, nrow=5)    
+  for (k in 1:5){
+     valid.id = ((k-1)*n0 + 1):(k*n0)
+     valid.dat = in.data[valid.id,]
+     train.dat = in.data[-valid.id,] 
+     tree.model = tree.builder(in.data, fp, fn, purity)
+     pred = predict(tree.model, newdata = valid.dat, type = "prob")[,2]
+     
+     for (i in 1:20){
+        pc.1 = ifelse(pred > cutoff[i], "Yes", "No")
+        a1 = mean(pc.1 == valid.dat$Default)
+        accuracy.mtx[k,i] = a1
+       }
+      }
+   avg.acc = apply(accuracy.mtx, 2, mean)
+   n = length(avg.acc)
+   idx = which(avg.acc == max(avg.acc))
+   tick.label = as.character(round(cutoff,2))
+   plot(1:n, avg.acc, xlab="cut-off score", ylab="average accuracy", 
+        ylim=c(min(avg.acc), 1), 
+        axes = FALSE,
+        main=paste("5-fold CV optimal cut-off \n ",purity,"(fp, fn) = (", fp, ",", fn,")" , collapse = ""),
+        cex.main = 0.9,
+        col.main = "navy")
+        axis(1, at=1:20, label = tick.label, las = 2)
+        axis(2)
+        points(idx, avg.acc[idx], pch=19, col = "forestgreen")
+        segments(idx , min(avg.acc), idx , avg.acc[idx ], col = "forestgreen")
+       text(idx, avg.acc[idx]+0.03, as.character(round(avg.acc[idx],4)), col = "forestgreen", cex = 0.8) 
+   }
+
+#Creating a function to find the optimal cut-off probability and plot the results
+```
+
+```{r}
+Optm.cutoff(in.data = trainDT, fp=1, fn=1, purity="gini")
+```
+
+```{r}
+Optm.cutoff(in.data = trainDT, fp=1, fn=1, purity="information")
+```
+
+```{r}
+Optm.cutoff(in.data = trainDT, fp=1, fn=10, purity="gini")
+```
+
+```{r}
+Optm.cutoff(in.data = trainDT, fp=1, fn=10, purity="information")
+
+```
+
+The above plots are the optimal cut-off points for each decision tree. We can use these values to further optimize our models and ROC Curves to pick the best model depending on how accurate we want to be.
+
+## 11.3 Conclusions
+From our modeling, ROC Curves and Cut-Off probability, the best model from the decision tree algorithms is the entropy model that penalizes for all incorrect predictions. This model gave us great accuracy at well over 90% which is the highest of the models. Also, this gave us a very large AUC that was also well over 90% which accounts for more than 90% of the data.
+
